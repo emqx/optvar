@@ -66,6 +66,7 @@ concuerror_test: $(CONCUERROR)
 	$(call concuerror,optvar_waiter_killed_test)
 	$(call concuerror,optvar_wait_multiple_test)
 	$(call concuerror,optvar_wait_multiple_timeout_test)
+	$(call concuerror,optvar_list_test)
 
 $(CONCUERROR):
 	mkdir -p _build/

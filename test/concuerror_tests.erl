@@ -150,6 +150,16 @@ optvar_wait_multiple_timeout_one_test() ->
         cleanup()
     end.
 
+optvar_list_test() ->
+  init(),
+  try
+    ?assertMatch([], optvar:list()),
+    optvar:set({foo, bar}, 1),
+    ?assertMatch([{foo, bar}], optvar:list())
+  after
+    cleanup()
+  end.
+
 init() ->
   case is_concuerror() of
     true ->
