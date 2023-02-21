@@ -137,7 +137,7 @@ read(Key, Timeout) ->
                 {'DOWN', MRef, _, _, noproc} ->
                     %% Race condition: the variable was set between
                     %% `read_or_wait' and `monitor' calls:
-                    read(Key, 0)
+                    read(Key, Timeout)
             after Timeout ->
                     demonitor(MRef, [flush]),
                     timeout
