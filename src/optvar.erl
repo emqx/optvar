@@ -25,7 +25,7 @@
 %% API:
 -export([init/0, stop/0,
          set/2, unset/1, is_set/1, read/1, read/2, peek/1, wait_vars/2,
-         list/0]).
+         list/0, list_all/0]).
 
 %% Internal exports:
 -export([waker_entrypoint/2]).
@@ -162,6 +162,12 @@ wait_vars(Keys, Timeout) ->
 -spec list() -> [key()].
 list() ->
   Pattern = {'$1', {set, '_'}},
+  ets:select(?status_tab, [{Pattern, [], ['$1']}]).
+
+%% @doc List all keys
+-spec list_all() -> [key()].
+list_all() ->
+  Pattern = {'$1', '_'},
   ets:select(?status_tab, [{Pattern, [], ['$1']}]).
 
 %%================================================================================

@@ -42,6 +42,34 @@ optvar_read_test() ->
         cleanup()
     end.
 
+optvar_set_unset_test() ->
+  init(),
+  Var = {foo, bar},
+  Val = 1,
+  try
+    {Pid1, MRef1} = spawn_monitor(fun() ->
+                                      ?assertEqual(Val, optvar:read(Var))
+                                  end),
+    {Pid2, MRef2} = spawn_monitor(fun() ->
+                                      ?assertEqual(Val, optvar:read(Var))
+                                  end),
+    spawn(fun() ->
+              exit(Pid1, intentional)
+          end),
+    optvar:unset(Var),
+    optvar:set(Var, Val),
+    optvar:unset(Var),
+    optvar:set(Var, Val),
+    receive
+      {'DOWN', MRef1, _, _, _} -> ok
+    end,
+    receive
+      {'DOWN', MRef2, _, _, _} -> ok
+    end
+  after
+    cleanup()
+  end.
+
 optvar_unset_test() ->
     init(),
     Var = {foo, bar},
@@ -152,10 +180,15 @@ optvar_wait_multiple_timeout_one_test() ->
 
 optvar_list_test() ->
   init(),
+  Var = {foo, bar},
+  Val = 1,
   try
+    ?assertMatch(timeout, optvar:read(Var, 0)),
     ?assertMatch([], optvar:list()),
-    optvar:set({foo, bar}, 1),
-    ?assertMatch([{foo, bar}], optvar:list())
+    ?assertMatch([Var], optvar:list_all()),
+    optvar:set(Var, 1),
+    ?assertMatch([Var], optvar:list()),
+    ?assertMatch([Var], optvar:list_all())
   after
     cleanup()
   end.
