@@ -42,33 +42,88 @@ optvar_read_test() ->
         cleanup()
     end.
 
+optvar_zombie_test() ->
+    init(),
+    Var1 = {foo, bar},
+    Var2 = {bar, foo},
+    Val1 = 1,
+    Val2 = 1,
+    try
+        timeout = optvar:read(Var1, 0),
+        timeout = optvar:read(Var2, 0),
+        [{_, {unset, Pid}}] = ets:lookup(optvar_status_tab, Var1),
+        %% Create a zombie entry in the status table:
+        MRefWaker = monitor(process, Pid),
+        exit(Pid, kill),
+        receive
+            {'DOWN', MRefWaker, _, _, _} -> ok
+        end,
+        %% Now spawn workers that will encounter the zombie:
+        Setter1 = spawn(fun() ->
+                                ?assertMatch(ok, optvar:set(Var1, Val1))
+                        end),
+        Setter2 = spawn(fun() ->
+                                ?assertMatch(ok, optvar:set(Var2, Val2))
+                        end),
+        Reader = spawn(fun() ->
+                               ?assertEqual(Val1, optvar:read(Var1)),
+                               ?assertEqual(Val2, optvar:read(Var2))
+                       end),
+        %% Regardless, all the processes should avoid deadloop:
+        wait_pids([Reader, Setter1, Setter2])
+    after
+        cleanup()
+    end.
+
+optvar_set_unset_race_test() ->
+    init(),
+    Var = {foo, bar},
+    Val = 1,
+    try
+        Setter = spawn(fun() ->
+                               ?assertMatch(ok, optvar:set(Var, Val))
+                       end),
+        Unsetter = spawn(fun() ->
+                                 ?assertMatch(ok, optvar:unset(Var))
+                         end),
+        Reader1 = spawn(fun() ->
+                                ?assertEqual(Val, optvar:read(Var))
+                        end),
+        Reader2 = spawn(fun() ->
+                                ?assertEqual(Val, optvar:read(Var))
+                        end),
+        %% Wait until the variable is unset:
+        wait_pids([Unsetter]),
+        ?assertMatch(ok, optvar:set(Var, Val)),
+        %% Now when the variable is set by either process, both reader
+        %% processes should be able to terminate:
+        wait_pids([Setter, Reader1, Reader2])
+    after
+        cleanup()
+    end.
+
 optvar_set_unset_test() ->
-  init(),
-  Var = {foo, bar},
-  Val = 1,
-  try
-    {Pid1, MRef1} = spawn_monitor(fun() ->
-                                      ?assertEqual(Val, optvar:read(Var))
-                                  end),
-    {Pid2, MRef2} = spawn_monitor(fun() ->
-                                      ?assertEqual(Val, optvar:read(Var))
-                                  end),
-    spawn(fun() ->
-              exit(Pid1, intentional)
-          end),
-    optvar:unset(Var),
-    optvar:set(Var, Val),
-    optvar:unset(Var),
-    optvar:set(Var, Val),
-    receive
-      {'DOWN', MRef1, _, _, _} -> ok
-    end,
-    receive
-      {'DOWN', MRef2, _, _, _} -> ok
-    end
-  after
-    cleanup()
-  end.
+    init(),
+    Var = {foo, bar},
+    Val = 1,
+    try
+        Pid1 = spawn(fun() ->
+                             ?assertEqual(Val, optvar:read(Var))
+                     end),
+        Pid2 = spawn(fun() ->
+                             ?assertEqual(Val, optvar:read(Var))
+                     end),
+        spawn(fun() ->
+                      exit(Pid1, intentional)
+              end),
+        optvar:unset(Var),
+        optvar:set(Var, Val),
+        optvar:unset(Var),
+        optvar:set(Var, Val),
+        wait_pids([Pid1, Pid2])
+    after
+        cleanup()
+    end.
 
 optvar_unset_test() ->
     init(),
@@ -116,14 +171,15 @@ optvar_waiter_killed_test() ->
         Waiter = spawn(fun() ->
                                catch optvar:read(foo)
                        end),
-        _Killer = spawn(fun() ->
-                                exit(Waiter, shutdown)
-                        end),
-        _Setter = spawn(fun() ->
-                                optvar:set(foo, Val)
-                        end),
+        Killer = spawn(fun() ->
+                               exit(Waiter, shutdown)
+                       end),
+        Setter = spawn(fun() ->
+                               optvar:set(foo, Val)
+                       end),
         ?assertEqual(Val, optvar:read(foo)),
-        ?assertEqual({ok, Val}, optvar:peek(foo))
+        ?assertEqual({ok, Val}, optvar:peek(foo)),
+        wait_pids([Waiter, Killer, Setter])
     after
         cleanup()
     end.
@@ -193,13 +249,21 @@ optvar_list_test() ->
     cleanup()
   end.
 
+wait_pids([]) ->
+    ok;
+wait_pids([Pid|Rest]) ->
+    MRef = monitor(process, Pid),
+    receive
+        {'DOWN', MRef, _, _, _} -> wait_pids(Rest)
+    end.
+
 init() ->
-  case is_concuerror() of
-    true ->
-      optvar:init();
-    false ->
-      {ok, _} = application:ensure_all_started(optvar)
-  end.
+    case is_concuerror() of
+        true ->
+            {ok, _} = optvar_sup:start_link();
+        false ->
+            {ok, _} = application:ensure_all_started(optvar)
+    end.
 
 cleanup() ->
     case is_concuerror() of

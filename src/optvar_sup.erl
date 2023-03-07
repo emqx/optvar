@@ -30,6 +30,7 @@ init([]) ->
                  intensity => 0,
                  period => 1},
     ChildSpecs = [],
+    optvar:init(),
     {ok, {SupFlags, ChildSpecs}}.
 
 %% internal functions
