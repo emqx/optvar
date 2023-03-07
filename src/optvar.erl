@@ -56,7 +56,7 @@ init() ->
 -spec stop() -> ok.
 stop() ->
     Wakers = lists:flatten(ets:match(?status_tab, {'_', {unset, '$1'}})),
-    [exit(I, shutdown) || I <- Wakers],
+    [exit(I, kill) || I <- Wakers],
     ets:delete(?status_tab),
     ok.
 
@@ -75,7 +75,11 @@ set(Key, Value) ->
             MRef = monitor(process, Pid),
             Pid ! {set, Value},
             receive
-                {'DOWN', MRef, _, _, _} -> ok
+                {'DOWN', MRef, _, _, {optvar_set, _}} ->
+                    ok;
+                {'DOWN', MRef, _, _, noproc} ->
+                    banish_zombie(Key, Pid),
+                    set(Key, Value)
             end;
         [] ->
             %% The value is not set, and nobody waits for it:
@@ -132,12 +136,9 @@ read(Key, Timeout) ->
                 %% Rather unconventionally, the actual information is
                 %% transmitted in a DOWN message from a temporary
                 %% "waker" process. See `waker_loop':
-                {'DOWN', MRef, _, _, {optvar_set, Value}} ->
-                    {ok, Value};
-                {'DOWN', MRef, _, _, noproc} ->
-                    %% Race condition: the variable was set between
-                    %% `read_or_wait' and `monitor' calls:
-                    read(Key, Timeout)
+                {'DOWN', MRef, _, _, Reason} ->
+                    {optvar_set, Value} = Reason, % Assert
+                    {ok, Value}
             after Timeout ->
                     demonitor(MRef, [flush]),
                     timeout
@@ -161,14 +162,18 @@ wait_vars(Keys, Timeout) ->
 %% @doc List keys that are set
 -spec list() -> [key()].
 list() ->
-  Pattern = {'$1', {set, '_'}},
-  ets:select(?status_tab, [{Pattern, [], ['$1']}]).
+    Pattern = {'$1', {set, '_'}},
+    ets:select(?status_tab, [{Pattern, [], ['$1']}]).
 
 %% @doc List all keys
 -spec list_all() -> [key()].
 list_all() ->
-  Pattern = {'$1', '_'},
-  ets:select(?status_tab, [{Pattern, [], ['$1']}]).
+    Pattern = {'$1', '_'},
+    ets:select(?status_tab, [{Pattern, [], ['$1']}]).
+
+-spec banish_zombie(key(), pid()) -> true.
+banish_zombie(Key, Pid) ->
+    ets:match_delete(?status_tab, {Key, {unset, Pid}}).
 
 %%================================================================================
 %% Internal functions
@@ -191,7 +196,14 @@ read_or_wait(Key) ->
         [{_, {set, Val}}] ->
             {set, Val};
         [{_, {unset, Pid}}] ->
-            {wait, monitor(process, Pid)}
+            MRef = monitor(process, Pid),
+            receive
+                {'DOWN', MRef, _, _, noproc} ->
+                    banish_zombie(Key, Pid),
+                    read_or_wait(Key)
+            after 0 ->
+                    {wait, MRef}
+            end
     end.
 
 -spec do_wait_vars([{key(), reference()}], integer()) ->
@@ -219,6 +231,11 @@ do_wait_vars([{Key, MRef}|Rest], TimeLeft) ->
 
 -spec waker_entrypoint(key(), pid()) -> no_return().
 waker_entrypoint(Key, Parent) ->
+    %% The process must keep running, or Bad Things Will Happen
+    process_flag(trap_exit, true),
+    %% Set the group leader to avoid getting killed by the application
+    %% controller when the calling application gets stopped:
+    group_leader(whereis(init), self()),
     case ets_insert_new({Key, {unset, self()}}) of
         false ->
             %% Race condition: someone installed the waker before us,

@@ -50,7 +50,7 @@ dialyzer:
 CONCUERROR := $(BUILD_DIR)/Concuerror/bin/concuerror
 CONCUERROR_RUN := $(CONCUERROR) \
 	--treat_as_normal shutdown --treat_as_normal normal --treat_as_normal intentional \
-	--treat_as_normal optvar_set --treat_as_normal optvar_stopped --treat_as_normal optvar_retry \
+	--treat_as_normal optvar_set --treat_as_normal optvar_stopped --treat_as_normal optvar_retry --treat_as_normal killed \
 	-x code -x code_server -x error_handler \
 	-pa $(BUILD_DIR)/concuerror+test/lib/optvar/ebin
 
@@ -68,6 +68,8 @@ concuerror_test: $(CONCUERROR)
 	$(call concuerror,optvar_wait_multiple_timeout_test)
 	$(call concuerror,optvar_list_test)
 	$(call concuerror,optvar_set_unset_test)
+	$(call concuerror,optvar_set_unset_race_test)
+	$(call concuerror,optvar_zombie_test)
 
 $(CONCUERROR):
 	mkdir -p _build/
