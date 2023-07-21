@@ -132,13 +132,25 @@ read(Key, Timeout) ->
         {set, Value} ->
             {ok, Value};
         {wait, MRef} ->
+            T0 = erlang:monotonic_time(millisecond),
             receive
                 %% Rather unconventionally, the actual information is
                 %% transmitted in a DOWN message from a temporary
                 %% "waker" process. See `waker_loop':
+                {'DOWN', MRef, _, _, {optvar_set, Value}} ->
+                    %% Normal flow:
+                    {ok, Value};
+                {'DOWN', MRef, _, Pid, noproc} ->
+                    %% Race condition, retry:
+                    T1 = erlang:monotonic_time(millisecond),
+                    banish_zombie(Key, Pid),
+                    NewTimeout = case Timeout of
+                                     infinity -> infinity;
+                                     _        -> Timeout - (T1 - T0)
+                                 end,
+                    read(Key, NewTimeout);
                 {'DOWN', MRef, _, _, Reason} ->
-                    {optvar_set, Value} = Reason, % Assert
-                    {ok, Value}
+                    error({optvar_unexpected_exit_reason, Key, MRef, Reason})
             after Timeout ->
                     demonitor(MRef, [flush]),
                     timeout
@@ -188,6 +200,7 @@ read_or_wait(Key) ->
             %% as a waker for the key, or exits:
             receive
                 {Pid, proceed} ->
+                    erlang:display({proceed, Pid, MRef}),
                     {wait, MRef};
                 {'DOWN', MRef, _, _, Reason} ->
                     optvar_retry = Reason, %% assert
@@ -197,13 +210,7 @@ read_or_wait(Key) ->
             {set, Val};
         [{_, {unset, Pid}}] ->
             MRef = monitor(process, Pid),
-            receive
-                {'DOWN', MRef, _, _, noproc} ->
-                    banish_zombie(Key, Pid),
-                    read_or_wait(Key)
-            after 0 ->
-                    {wait, MRef}
-            end
+            {wait, MRef}
     end.
 
 -spec do_wait_vars([{key(), reference()}], integer()) ->
@@ -235,7 +242,7 @@ waker_entrypoint(Key, Parent) ->
     process_flag(trap_exit, true),
     %% Set the group leader to avoid getting killed by the application
     %% controller when the calling application gets stopped:
-    group_leader(whereis(init), self()),
+    group_leader(self(), self()),
     case ets_insert_new({Key, {unset, self()}}) of
         false ->
             %% Race condition: someone installed the waker before us,

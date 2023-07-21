@@ -75,6 +75,31 @@ optvar_zombie_test() ->
         cleanup()
     end.
 
+%% Test 2 processes trying to banish zombie concurrently:
+optvar_zombie_race_test() ->
+    init(),
+    Var = foo,
+    Val = val,
+    try
+        timeout = optvar:read(Var, 0),
+        [{_, {unset, Waker}}] = ets:lookup(optvar_status_tab, Var),
+        MRef = monitor(process, Waker),
+        exit(Waker, kill),
+        receive {'DOWN', MRef, _, _, _} -> ok end,
+        Setter = spawn(fun() ->
+                               optvar:set(Var, Val)
+                       end),
+        Reader1 = spawn(fun() ->
+                                ?assertEqual(Val, optvar:read(Var))
+                        end),
+        Reader2 = spawn(fun() ->
+                                ?assertEqual(Val, optvar:read(Var))
+                        end),
+        wait_pids([Setter, Reader1, Reader2])
+    after
+        cleanup()
+    end.
+
 optvar_set_unset_race_test() ->
     init(),
     Var = {foo, bar},
