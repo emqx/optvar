@@ -128,6 +128,7 @@ read(Key) ->
 %% set within the timeout
 -spec read(key(), timeout()) -> {ok, value()} | timeout.
 read(Key, Timeout) ->
+    StartT = current_time(Timeout),
     case read_or_wait(Key) of
         {set, Value} ->
             {ok, Value};
@@ -137,8 +138,15 @@ read(Key, Timeout) ->
                 %% transmitted in a DOWN message from a temporary
                 %% "waker" process. See `waker_loop':
                 {'DOWN', MRef, _, _, Reason} ->
-                    {optvar_set, Value} = Reason, % Assert
-                    {ok, Value}
+                    case Reason of % Assert
+                        {optvar_set, Value} ->
+                            {ok, Value};
+                        noproc ->
+                            %% race condition; retry
+                            EndT = current_time(Timeout),
+                            NewTimeout = new_timeout(Timeout, StartT, EndT),
+                            read(Key, NewTimeout)
+                    end
             after Timeout ->
                     demonitor(MRef, [flush]),
                     timeout
@@ -268,3 +276,14 @@ ets_insert_new(Value) ->
         error:badarg ->
             exit(optvar_stopped)
     end.
+
+current_time(infinity = _Timeout) ->
+    %% we'll wait indefinitely, no point in reading the time.
+    undefined;
+current_time(Timeout) when is_integer(Timeout) ->
+    erlang:system_time(millisecond).
+
+new_timeout(infinity = _Timeout, _StartT, _EndT) ->
+    infinity;
+new_timeout(Timeout, StartT, EndT) ->
+    max(0, Timeout - (EndT - StartT)).
