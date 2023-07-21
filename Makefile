@@ -70,6 +70,7 @@ concuerror_test: $(CONCUERROR)
 	$(call concuerror,optvar_set_unset_test)
 	$(call concuerror,optvar_set_unset_race_test)
 	$(call concuerror,optvar_zombie_test)
+	$(call concuerror,optvar_zombie_race_test)
 
 $(CONCUERROR):
 	mkdir -p _build/
